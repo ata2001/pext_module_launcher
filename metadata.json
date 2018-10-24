@@ -6,7 +6,7 @@
   "homepage": "https://pext.hackerchick.me/",
   "license": "GPL-3.0+",
   "git_urls": [
-    "https://github.com/Pext/pext_module_launcher"
+    "https://github.com/ata2001/pext_module_launcher"
   ],
   "settings": [{
     "name": "use_path",

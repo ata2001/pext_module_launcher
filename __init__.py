@@ -18,6 +18,7 @@
 import html
 import platform
 import shlex
+import configparser
 
 from distutils.util import strtobool
 from os import access, environ, listdir, pathsep, X_OK
@@ -49,6 +50,34 @@ class Module(ModuleBase):
                     continue
 
                 self.executables.append(executable.rstrip('.app'))
+        elif not self.use_path and platform.system() == 'Linux':
+            xdg_data = environ['XDG_DATA_DIRS'].split(pathsep)
+            for directory in xdg_data:
+                directory = join(expanduser(directory), 'applications')
+                try:
+                    for desktop_entry in listdir(directory):
+                        desktop_entry = join(directory, desktop_entry)
+                        parser = configparser.ConfigParser()
+                        parser.read(desktop_entry)
+                        try:
+                            app = parser['Desktop Entry']['Name']
+                        except:
+                            continue
+
+                        if not app in self.executables:
+                            print("Adding {} as {}".format(repr(app), repr(desktop_entry)))
+                            self.executables.append(app)
+                            self.info_panels[app] = "<b>{}</b>".format(html.escape(desktop_entry))
+                            print(self.info_panels[app])
+                            self.context_menus[app] = [desktop_entry]
+                            print(self.context_menus[app])
+                        else:
+                            print("Adding {1} to {0}".format(app, desktop_entry))
+                            self.info_panels[app] += "<br/>{}".format(html.escape(desktop_entry))
+                            self.context_menus[app].append(desktop_entry)
+                except OSError:
+                    pass
+
         else:
             if not self.use_path and platform.system() == 'Windows':
                 paths = []
@@ -107,8 +136,10 @@ class Module(ModuleBase):
         elif len(selection) == 1:
             if not self.use_path and platform.system() == 'Darwin':
                 Popen(["open", "-a", "{}".format(selection[0]["value"])])
+            elif not self.use_path and platform.system() == 'Linux':
+                Popen(["xdg-open", selection[0]['context_option']])
             else:
-                command = shlex.split(selection[0]["value"])
+                command = shlex.split(selection[0]["value"] + " " + selection[0]["args"])
                 if self.settings['_api_version'] >= [0, 4, 0]:
                     if selection[0]['context_option']:
                         command[0] = selection[0]['context_option']
