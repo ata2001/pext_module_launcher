@@ -18,6 +18,7 @@
 import html
 import platform
 import shlex
+import configparser
 
 from distutils.util import strtobool
 from os import access, environ, listdir, pathsep, X_OK
@@ -49,6 +50,26 @@ class Module(ModuleBase):
                     continue
 
                 self.executables.append(executable.rstrip('.app'))
+        elif not self.use_path and platform.system() == 'Linux':
+            xdg_data = environ['XDG_DATA_DIR'].split(pathsep)
+            for directory in xdg_data:
+                directory = join(expanduser(directory, 'applications'))
+                try:
+                    for desktop_entry in listdir(directory):
+                        desktop_entry = join(directory, desktop_entry)
+                        parser = configparser.ConfigParser()
+                        parser.read(desktop_entry)
+                        app = parser['Desktop Entry']['Name']
+                        if not app in self.executables:
+                            self.executables.append(app)
+                            self.info_panels[app] = "<b>{}</b>".format(html.escape(desktop_entry))
+                            self.context_menus[app] = [desktop_entry]
+                        else:
+                            self.info_panels[app] += "<br/>{}".format(html.escape(desktop_entry))
+                            self.context_menus[app].append(desktop_entry)
+                except OSError:
+                    pass
+
         else:
             if not self.use_path and platform.system() == 'Windows':
                 paths = []
