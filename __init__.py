@@ -15,6 +15,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+import configparser
 import html
 import platform
 import shlex
@@ -22,6 +23,7 @@ import shlex
 from distutils.util import strtobool
 from os import access, environ, listdir, pathsep, X_OK
 from os.path import expanduser, isfile, join
+from re import sub
 from subprocess import Popen
 
 from pext_base import ModuleBase
@@ -41,47 +43,86 @@ class Module(ModuleBase):
 
         self._get_entries()
 
-    def _get_entries(self):
-        if not self.use_path and platform.system() == 'Darwin':
-            for executable in listdir('/Applications'):
-                fullname = join('/Applications', executable)
-                if not executable.endswith('.app'):
-                    continue
+    def get_executables(self, paths=None, windows=False):
+        if paths is None:
+            paths = environ['PATH'].split(pathsep)
 
-                self.executables.append(executable.rstrip('.app'))
-        else:
-            if not self.use_path and platform.system() == 'Windows':
-                paths = []
+        for path in paths:
+            path = expanduser(path)
+            try:
+                for executable in listdir(path):
+                    fullname = join(path, executable)
+                    if isfile(fullname):
+                        if windows:
+                            if not executable.endswith('.exe'):
+                                continue
+                        else:
+                            if not access(fullname, X_OK):
+                                continue
+
+                        if executable not in self.executables:
+                            self.executables.append(executable)
+                            self.info_panels[executable] = "<b>{}</b>".format(html.escape(fullname))
+                            self.context_menus[executable] = [fullname]
+                        else:
+                            self.info_panels[executable] += "<br/>{}".format(html.escape(fullname))
+                            self.context_menus[executable].append(fullname)
+            except OSError:
+                pass
+
+    def _get_entries(self):
+        if platform.system() == 'Darwin':
+            if self.use_path:
+                self.get_executables()
+            else:
+                for executable in listdir('/Applications'):
+                    if not executable.endswith('.app'):
+                        continue
+
+                    self.executables.append(executable.rstrip('.app'))
+        elif platform.system() == 'Linux':
+            if self.use_path:
+                self.get_executables()
+            else:
+                try:
+                    xdg_data_dirs = environ['XDG_DATA_DIRS'].split(pathsep)
+                except KeyError:
+                    xdg_data_dirs = ['/usr/share', '/usr/local/share']
+
+                for directory in xdg_data_dirs:
+                    directory = join(expanduser(directory), 'applications')
+                    try:
+                        for desktop_entry in listdir(directory):
+                            desktop_entry = join(directory, desktop_entry)
+
+                            parser = configparser.RawConfigParser()
+                            parser.read(desktop_entry)
+                            try:
+                                app = parser['Desktop Entry']['Name']
+                                command = parser['Desktop Entry']['Exec']
+                            except KeyError:
+                                continue
+
+                            # FIXME: Calling executable without args
+                            command = sub(r'%[fFuUick]', '', command)
+
+                            if app not in self.executables:
+                                self.executables.append(app)
+                                self.info_panels[app] = "<b>{}</b>".format(html.escape(command))
+                                self.context_menus[app] = [command]
+                            elif command not in self.context_menus[app]:
+                                self.info_panels[app] += "<br/>{}".format(html.escape(command))
+                                self.context_menus[app].append(command)
+                    except OSError:
+                        pass
+        elif platform.system() == 'Windows':
+            if self.use_path:
+                self.get_executables(windows=True)
+            else:
                 import wmi
                 w = wmi.WMI()
-                for p in w.Win32_Product():
-                    paths.append(p.InstallLocation)
-            else:
-                paths = environ['PATH'].split(pathsep)
-
-            for path in paths:
-                path = expanduser(path)
-                try:
-                    for executable in listdir(path):
-                        fullname = join(path, executable)
-                        if isfile(fullname):
-                            if platform.system() == 'Windows':
-                                if not executable.endswith('.exe'):
-                                    continue
-                            else:
-                                if not access(fullname, X_OK):
-                                    continue
-
-                            if not executable in self.executables:
-                                self.executables.append(executable)
-                                self.info_panels[executable] = "<b>{}</b>".format(html.escape(fullname))
-                                self.context_menus[executable] = [fullname]
-                            else:
-                                self.info_panels[executable] += "<br/>{}".format(html.escape(fullname))
-                                self.context_menus[executable].append(fullname)
-
-                except OSError:
-                    pass
+                paths = [p.InstallLocation for p in w.Win32_Product()]
+                self.get_executables(paths, windows=True)
 
         self.executables.sort()
         self._set_entries()
@@ -112,6 +153,11 @@ class Module(ModuleBase):
 
             if not self.use_path and platform.system() == 'Darwin':
                 Popen(["open", "-a", "{}".format(command)])
+            elif not self.use_path and platform.system() == 'Linux':
+                command = shlex.split(
+                        selection[0]['context_option'] if selection[0]['context_option']
+                        else self.context_menus[selection[0]['value']][0])
+                Popen(command)
             else:
                 command = shlex.split(command)
                 if self.settings['_api_version'] >= [0, 4, 0]:
