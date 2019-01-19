@@ -23,7 +23,7 @@ import shlex
 from distutils.util import strtobool
 from os import access, environ, listdir, pathsep, X_OK
 from os.path import expanduser, isfile, join
-from re import sub
+from re import sub, subn
 from subprocess import Popen
 
 from pext_base import ModuleBase
@@ -43,7 +43,20 @@ class Module(ModuleBase):
 
         self._get_entries()
 
-    def get_executables(self, paths=None, windows=False):
+    @staticmethod
+    def parse_desktop_entry(path):
+        parser = configparser.RawConfigParser()
+        parser.read(path)
+
+        app = parser['Desktop Entry']['Name']
+        command = parser['Desktop Entry']['Exec']
+
+        # Remove deprecated and unrelevant field codes
+        command = sub(r'(?<!%)%[dDnNickvm]', '', command)
+
+        return app, command
+
+    def get_executables(self, paths=None):
         if paths is None:
             paths = environ['PATH'].split(pathsep)
 
@@ -53,7 +66,7 @@ class Module(ModuleBase):
                 for executable in listdir(path):
                     fullname = join(path, executable)
                     if isfile(fullname):
-                        if windows:
+                        if platform.system() == 'Windows':
                             if not executable.endswith('.exe'):
                                 continue
                         else:
@@ -95,34 +108,35 @@ class Module(ModuleBase):
                         for desktop_entry in listdir(directory):
                             desktop_entry = join(directory, desktop_entry)
 
-                            parser = configparser.RawConfigParser()
-                            parser.read(desktop_entry)
                             try:
-                                app = parser['Desktop Entry']['Name']
-                                command = parser['Desktop Entry']['Exec']
+                                app, command = self.parse_desktop_entry(desktop_entry)
                             except KeyError:
                                 continue
 
-                            # FIXME: Calling executable without args
-                            command = sub(r'%[fFuUick]', '', command)
+                            # TODO: Accept list of arguments
+                            for pattern, info in [(r'(?<!%)%[fF]', '<file name>'),
+                                                  (r'(?<!%)%[uU]', '<URL>')]:
+                                command_info, n = subn(pattern, info, command, count=1)
+                                if n:
+                                    break
 
                             if app not in self.executables:
                                 self.executables.append(app)
-                                self.info_panels[app] = "<b>{}</b>".format(html.escape(command))
+                                self.info_panels[app] = "<b>{}</b>".format(html.escape(command_info))
                                 self.context_menus[app] = [command]
                             elif command not in self.context_menus[app]:
-                                self.info_panels[app] += "<br/>{}".format(html.escape(command))
+                                self.info_panels[app] += "<br/>{}".format(html.escape(command_info))
                                 self.context_menus[app].append(command)
                     except OSError:
                         pass
         elif platform.system() == 'Windows':
             if self.use_path:
-                self.get_executables(windows=True)
+                self.get_executables()
             else:
                 import wmi
                 w = wmi.WMI()
                 paths = [p.InstallLocation for p in w.Win32_Product()]
-                self.get_executables(paths, windows=True)
+                self.get_executables(paths)
 
         self.executables.sort()
         self._set_entries()
@@ -154,9 +168,14 @@ class Module(ModuleBase):
             if not self.use_path and platform.system() == 'Darwin':
                 Popen(["open", "-a", "{}".format(command)])
             elif not self.use_path and platform.system() == 'Linux':
-                command = shlex.split(
-                        selection[0]['context_option'] if selection[0]['context_option']
-                        else self.context_menus[selection[0]['value']][0])
+                command = (selection[0]['context_option'] if selection[0]['context_option']
+                           else self.context_menus[selection[0]['value']][0])
+                # TODO: Accept list of arguments
+                args = selection[0]["args"]
+                if args:
+                    args = shlex.quote(args)
+                command = sub(r'(?<!%)%[fFuU]', args, command)
+                command = shlex.split(command)
                 Popen(command)
             else:
                 command = shlex.split(command)
