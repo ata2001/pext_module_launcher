@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 # Copyright (C) 2016 - 2017 Sylvia van Os <sylvia@hackerchick.me>
+# Copyright (C) 2019 Attila Szollosi
 #
 # Pext launcher module is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -41,6 +42,9 @@ class Module(ModuleBase):
         self.settings = settings
         self.q = q
 
+        if self.settings['_api_version'] < [0, 8, 0]:
+            self.q.put([Action.critical_error, "API version is not supported"])
+
         self._get_entries()
 
     @staticmethod
@@ -57,6 +61,7 @@ class Module(ModuleBase):
         return app, command
 
     def get_executables(self, paths=None):
+        """Discover executables"""
         if paths is None:
             paths = environ['PATH'].split(pathsep)
 
@@ -149,9 +154,8 @@ class Module(ModuleBase):
             self.q.put([Action.replace_command_list, self.executables])
             self.q.put([Action.replace_entry_list, []])
 
-        if self.settings['_api_version'] >= [0, 5, 0]:
-            self.q.put([Action.replace_command_info_dict, self.info_panels])
-            self.q.put([Action.replace_command_context_dict, self.context_menus])
+        self.q.put([Action.replace_command_info_dict, self.info_panels])
+        self.q.put([Action.replace_command_context_dict, self.context_menus])
 
     def stop(self):
         pass
@@ -160,29 +164,26 @@ class Module(ModuleBase):
         if len(selection) == 0:
             self._set_entries()
         elif len(selection) == 1:
-            if self.settings['_api_version'] >= [0, 8, 0]:
-                command = " ".join((selection[0]["value"], selection[0]["args"]))
-            else:
-                command = selection[0]["value"]
+            command = (selection[0]["context_option"] if selection[0]["context_option"]
+                       else self.context_menus[selection[0]["value"]][0])
+            args = selection[0]["args"]
 
             if not self.use_path and platform.system() == 'Darwin':
-                Popen(["open", "-a", "{}".format(command)])
+                if args:
+                    command = ("open", "-a", shlex.quote(command), "--args") + shlex.split(args)
+                else:
+                    command = ("open", "-a", shlex.quote(command))
+                Popen(command)
             elif not self.use_path and platform.system() == 'Linux':
-                command = (selection[0]['context_option'] if selection[0]['context_option']
-                           else self.context_menus[selection[0]['value']][0])
                 # TODO: Accept list of arguments
-                args = selection[0]["args"]
                 if args:
                     args = shlex.quote(args)
                 command = sub(r'(?<!%)%[fFuU]', args, command)
                 command = shlex.split(command)
                 Popen(command)
             else:
-                command = shlex.split(command)
-                if self.settings['_api_version'] >= [0, 4, 0]:
-                    if selection[0]['context_option']:
-                        command[0] = selection[0]['context_option']
-
+                if args:
+                    command = [command] + shlex.split(args)
                 Popen(command)
 
             self.q.put([Action.close])
